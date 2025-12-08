@@ -5,35 +5,49 @@
 
 This repository automatically builds the WebAssembly (WASM) version of Artifex's [MuPDF](https://mupdf.com/). It provides a simple way to use `mupdf.js` as a package dependency in modern web projects directly from GitHub.
 
-Builds are automatically published as versioned **[GitHub Releases](https://github.com/killbus/mupdf-wasm/releases)**.
+Builds are automatically triggered **weekly** and published as versioned **[GitHub Releases](https://github.com/killbus/mupdf-wasm/releases)**.
 
-## Usage
+## Installation & Usage
 
-You can add this package to your project using `pnpm`, `npm`, or `yarn`. By using the `mupdf@` alias, you can import the package with the clean name `mupdf`.
+You can install this package using `pnpm`, `npm`, or `yarn`. We recommend using the `mupdf` alias for cleaner imports.
 
-### Production Usage (Recommended)
+### 1. Stable Release (Recommended)
 
-For production environments, it is strongly recommended to depend on a specific, immutable version tag. This ensures your project's stability and predictability.
-
-1.  Go to the **[Releases page](https://github.com/killbus/mupdf-wasm/releases)** to find the latest version number (e.g., `1.26.7`).
-2.  Install using the version tag and the `mupdf` alias:
-
-    ```bash
-    # Replace '1.26.7' with the desired version
-    pnpm add mupdf@github:killbus/mupdf-wasm#1.26.7
-    ```
-
-### Development / Bleeding-Edge Usage
-
-If you need the absolute latest build for development or testing, you can install directly from the `release` branch.
+For production environments, use the latest stable version.
 
 ```bash
+# Install specific version (Recommended for stability)
+pnpm add mupdf@github:killbus/mupdf-wasm#v1.25.0
+
+# OR Install from the rolling stable branch
 pnpm add mupdf@github:killbus/mupdf-wasm#release
 ```
 
-### Importing in Your Code
+### 2. Prerelease / Beta
 
-After installation, you can import it into your project as an ES Module:
+To test upcoming features from MuPDF release candidates.
+
+```bash
+# Install specific release candidate
+pnpm add mupdf@github:killbus/mupdf-wasm#v1.26.0-rc1
+
+# OR Install from the rolling beta branch
+pnpm add mupdf@github:killbus/mupdf-wasm#release-beta
+```
+
+### 3. Nightly Build
+
+To use the absolute latest code from the upstream `master` branch (updated weekly).
+
+```bash
+# Install specific nightly build
+pnpm add mupdf@github:killbus/mupdf-wasm#nightly-2025.12.08-0bf523c
+
+# OR Install from the rolling nightly branch
+pnpm add mupdf@github:killbus/mupdf-wasm#release-nightly
+```
+
+### Importing in Your Code
 
 ```javascript
 import * as mupdf from 'mupdf';
@@ -45,37 +59,39 @@ import * as mupdf from 'mupdf';
 
 ## How It Works
 
-This repository uses a two-workflow GitHub Actions CI/CD setup to automate the build and release process.
+This repository uses a sophisticated GitHub Actions pipeline to automate the build and release process.
 
-*   **`main` branch**: Contains the source code for the builder, including the `package.json` template and the GitHub Actions workflow files.
-*   **`release` branch**: Contains only the compiled build artifacts for the latest version. This branch serves as the "rolling release" target.
+### Automated Weekly Builds (`cron`)
+Every Sunday, the workflow automatically:
+1.  Checks upstream [ArtifexSoftware/mupdf](https://github.com/ArtifexSoftware/mupdf) for updates.
+2.  Builds **three variants** in parallel:
+    *   **Stable**: Latest official release tag.
+    *   **Prerelease**: Latest RC/Beta tag (if available).
+    *   **Latest**: The current HEAD of the `master` branch.
+3.  Publishes artifacts to separate release channels.
 
-### The Workflows
+### Release Channels
 
-1.  **[`build.yml`](./.github/workflows/build.yml): The Builder**
-    *   Triggers weekly on a schedule or when run manually.
-    *   Determines the latest stable version of `ArtifexSoftware/mupdf` by checking its Git tags' creation dates.
-    *   Builds the WASM artifacts using the Emscripten SDK.
-    *   Uploads the compiled `dist` directory as an artifact for the next workflow.
-
-2.  **[`release.yml`](./.github/workflows/release.yml): The Releaser**
-    *   Triggers automatically upon the successful completion of the `build` workflow.
-    *   Downloads the build artifacts.
-    *   Pushes the new build files to the `release` branch.
-    *   **Creates a new Git tag and a corresponding GitHub Release**, using the MuPDF version number.
-    *   Attaches the build artifacts (`.js`, `.wasm`, etc.) as downloadable assets to the GitHub Release.
+| Channel | Branch | Tag Pattern | Description |
+| :--- | :--- | :--- | :--- |
+| **Stable** | `release` | `v1.x.x` | Use for Production. |
+| **Beta** | `release-beta` | `v1.x.x-rcX` | Use for testing upcoming releases. |
+| **Nightly** | `release-nightly` | `nightly-yyyy.mm.dd-hash` | Bleeding edge from master. |
 
 ---
 
-## Building a Specific Version
+## Manual Builds
 
-You can manually trigger a build for any specific MuPDF tag, branch, or commit.
+You can manually trigger a build at any time via the **Actions** tab:
 
-1.  Navigate to the **Actions** tab of this repository.
-2.  In the left sidebar, click on the **"Build MuPDF WASM"** workflow.
-3.  Above the list of runs, click the **"Run workflow"** dropdown button.
-4.  In the **`mupdf_ref`** input field, enter a Git reference (e.g., a tag like `1.24.0`).
-5.  Click the green **"Run workflow"** button. The process will build and create a new release for your specified version.
+1.  Select **"Build MuPDF WASM"** workflow.
+2.  Click **"Run workflow"**.
+3.  Choose a **Build Type**:
+    *   `stable` / `prerelease` / `latest`: Builds a single specific variant.
+    *   `all`: Builds ALL variants immediately.
+4.  (Optional) **Version Override**:
+    *   Enter a specific tag (e.g., `1.24.0`), branch, or commit hash to build exactly that version.
+    *   Leave empty to auto-resolve based on the Build Type.
 
 ## Source and License
 

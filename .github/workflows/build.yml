@@ -2,74 +2,173 @@ name: Build MuPDF WASM
 
 on:
   schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    # Builds ALL variants: stable, prerelease, latest
     - cron: '0 2 * * 0'
+  
   workflow_dispatch:
     inputs:
-      mupdf_ref:
-        description: 'MuPDF git ref (tag, branch, commit). Leave empty for latest.'
+      build_type:
+        description: 'Build type (single variant)'
+        type: choice
+        options:
+          - stable
+          - prerelease
+          - latest
+          - all  # Build all variants at once
+        default: stable
+        required: true
+      
+      version_override:
+        description: 'Override version (tag/branch/commit). Leave empty to auto-resolve based on build type.'
+        type: string
         required: false
         default: ''
+  
   push:
     branches: [ "main" ]
 
+# Permissions moved to top level for clarity
+permissions:
+  contents: read
+  id-token: write     # For OIDC token generation
+  attestations: write # For persisting attestations
+
 jobs:
-  build:
+  setup:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          if [ "${{ github.event_name }}" == "schedule" ] || [ "${{ github.event_name }}" == "push" ] || [ "${{ github.event.inputs.build_type }}" == "all" ]; then
+            echo 'matrix=["stable", "prerelease", "latest"]' >> $GITHUB_OUTPUT
+          else
+            echo "matrix=[\"${{ github.event.inputs.build_type }}\"]" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: setup
+    runs-on: ubuntu-latest
+    
+    # Prevent concurrent builds of the same type
+    concurrency:
+      group: build-${{ matrix.build_type }}-${{ github.ref }}
+      cancel-in-progress: true
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    
     steps:
       - name: Checkout builder repository
         uses: actions/checkout@v4
 
-      - name: Determine MuPDF version to checkout
-        id: mupdf_version
+      - name: Resolve upstream MuPDF version
+        id: resolve_version
+        uses: ./.github/actions/resolve-upstream-version
+        with:
+          build-type: ${{ matrix.build_type }}
+          version-override: ${{ github.event.inputs.version_override }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Display resolved version
         run: |
-          MANUAL_REF="${{ github.event.inputs.mupdf_ref }}"
-          if [ -n "$MANUAL_REF" ]; then
-            echo "Using manual ref: $MANUAL_REF"
-            echo "ref=$MANUAL_REF" >> $GITHUB_OUTPUT
-          else
-            echo "Performing partial clone to fetch Git metadata..."
-            git clone --filter=blob:none --bare https://github.com/ArtifexSoftware/mupdf.git mupdf_bare
-            
-            echo "Determining latest stable tag by creation date..."
-            LATEST_TAG=$(cd mupdf_bare && git for-each-ref --sort=-creatordate --format='%(refname:short)' refs/tags | grep -vE -- '-rc|-beta' | head -n 1)
-            
-            echo "Latest stable tag is: $LATEST_TAG"
-            echo "ref=$LATEST_TAG" >> $GITHUB_OUTPUT
-          fi
+          echo "::group::Build Information"
+          echo "Build Type: ${{ steps.resolve_version.outputs.build-type }}"
+          echo "Resolved Ref: ${{ steps.resolve_version.outputs.ref }}"
+          echo "Version: ${{ steps.resolve_version.outputs.version }}"
+          echo "Is Prerelease: ${{ steps.resolve_version.outputs.is-prerelease }}"
+          echo "Commit SHA: ${{ steps.resolve_version.outputs.commit-sha }}"
+          echo "::endgroup::"
 
       - name: Checkout MuPDF source code
         uses: actions/checkout@v4
         with:
           repository: ArtifexSoftware/mupdf
-          ref: ${{ steps.mupdf_version.outputs.ref }}
+          ref: ${{ steps.resolve_version.outputs.ref }}
           path: mupdf
           submodules: 'recursive'
 
-      - name: Setup Emscripten SDK (emsdk)
+      - name: Cache Emscripten SDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.emscripten_cache
+            ~/emsdk
+          key: emsdk-${{ runner.os }}-${{ hashFiles('mupdf/platform/wasm/**') }}
+          restore-keys: |
+            emsdk-${{ runner.os }}-
+
+      - name: Setup Emscripten SDK
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: 'latest'
+          actions-cache-folder: 'emsdk-cache'
 
-      - name: Log files in wasm directory for verification
+      - name: Verify WASM build environment
         working-directory: mupdf/platform/wasm
-        run: ls -lR
+        run: |
+          echo "::group::WASM Directory Contents"
+          ls -lR
+          echo "::endgroup::"
+          
+          echo "::group::Emscripten Version"
+          emcc --version
+          echo "::endgroup::"
 
-      - name: Run official build script
+      - name: Build MuPDF WASM
         working-directory: mupdf/platform/wasm
         run: bash ./tools/build.sh
 
-      - name: Prepare artifacts for release workflow
+      - name: Generate build metadata
+        id: metadata
         run: |
-          echo "${{ steps.mupdf_version.outputs.ref }}" > ./version.txt
+          METADATA_FILE="./build-metadata.json"
+          
+          cat > "$METADATA_FILE" << EOF
+          {
+            "mupdf_version": "${{ steps.resolve_version.outputs.version }}",
+            "mupdf_ref": "${{ steps.resolve_version.outputs.ref }}",
+            "mupdf_commit": "${{ steps.resolve_version.outputs.commit-sha }}",
+            "build_type": "${{ steps.resolve_version.outputs.build-type }}",
+            "is_prerelease": ${{ steps.resolve_version.outputs.is-prerelease }},
+            "build_timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "workflow_run_id": "${{ github.run_id }}",
+            "workflow_run_number": "${{ github.run_number }}",
+            "workflow_run_attempt": "${{ github.run_attempt }}",
+            "builder_ref": "${{ github.ref }}",
+            "builder_sha": "${{ github.sha }}"
+          }
+          EOF
+          
+          echo "::group::Build Metadata"
+          cat "$METADATA_FILE"
+          echo "::endgroup::"
+          
+          # Also create simple version.txt for backwards compatibility
+          echo "${{ steps.resolve_version.outputs.version }}" > ./version.txt
 
-      - name: Upload Build Artifacts
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mupdf-wasm-dist
+          name: mupdf-wasm-dist-${{ steps.resolve_version.outputs.version }}
           path: mupdf/platform/wasm/dist/
+          retention-days: 7
+          compression-level: 9
       
-      - name: Upload Version Artifact
+      - name: Upload build metadata
         uses: actions/upload-artifact@v4
         with:
-          name: mupdf-version
-          path: version.txt
+          name: mupdf-build-metadata-${{ steps.resolve_version.outputs.version }}
+          path: |
+            build-metadata.json
+            version.txt
+          retention-days: 7
+
+      - name: Generate SLSA provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: 'mupdf/platform/wasm/dist/**/*'

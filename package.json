@@ -1,0 +1,29 @@
+{
+  "name": "mupdf-wasm",
+  "version": "0.0.0",
+  "description": "MuPDF.js: A lightweight PDF, XPS, and E-book viewer library. Automated WASM build.",
+  "author": "Artifex Software, Inc. (Automated build by killbus)",
+  "license": "AGPL-3.0-or-later",
+  "keywords": [
+    "mupdf",
+    "pdf",
+    "wasm",
+    "webassembly"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/killbus/mupdf-wasm.git"
+  },
+  "type": "module",
+  "main": "./dist/mupdf.js",
+  "types": "./dist/mupdf.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/mupdf.d.ts",
+      "default": "./dist/mupdf.js"
+    }
+  },
+  "files": [
+    "dist/"
+  ]
+}
